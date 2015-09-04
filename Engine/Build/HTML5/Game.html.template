@@ -1,0 +1,610 @@
+﻿<!doctype html>
+<html lang="en-us">
+ <head>
+<title>%GAME%</title>
+<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<style type="text/css">
+body {
+  background: black;
+  color: gray;
+  font-family: Helvetica, sans-serif;
+}
+
+.emscripten {
+  padding-right: 0;
+  margin-left: auto;
+  margin-right: auto;
+  display: block;
+}
+
+div#status {
+  font-size: 70%;
+}
+
+textarea.emscripten {
+  font-family: consolas, "lucida sans console", monospace;
+  background: gray;
+  font-size: 80%;
+  width: 80%;
+  display: none;
+}
+
+div.emscripten {
+  text-align: center;
+}
+
+div#display_wrapper {
+  position: relative;
+  margin: 1em auto 10px auto;
+  text-align: center;
+  min-width: 640px;
+  max-width: 1200px; 
+  /*border: 1px solid red;*/
+}
+
+canvas.main {
+  border: none;
+  background: #444;
+}
+
+canvas.main:not([fullscreen]) {
+  padding-right: 0;
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+}
+
+input[type=button] {
+  background: #444;
+  border: 2px solid #444;
+  border-radius: 2px;
+}
+
+input[type=button]:hover {
+  background: #777;
+  border-color: #777;
+}
+
+video {
+  display: none;
+}
+    </style>
+  </head>
+  <body>
+
+    <div class="emscripten" id="status">Downloading...</div>
+    <div class="emscripten">
+      <progress value="0" max="100" id="progress" hidden=1></progress>
+    </div>
+    
+    </br>
+    <div class="emscripten">
+      <input type="button" value="Pause" onclick="Module['pauseMainLoop']();">
+      <input type="button" value="Resume" onclick="Module['resumeMainLoop']();">
+      <!--input type="button" value="Quit" onclick="__exit(0)" -->
+      <input type="button" value="ClearStoredGame" onclick="$.jStorage.flush()">
+      <input type="button" value="Fullscreen" id="fullscreen_request">
+      <input type="button" value="VR" onclick="vrMode()" id="vrButton">
+    </div>
+
+    <!-- Canvas resolution needs to be divisible by 8; default to 904x1600 for in-page resolution -->
+    <div id="display_wrapper">
+      <canvas class="main" id="canvas" oncontextmenu="event.preventDefault()" height="904" width="1600"></canvas>
+    </div>
+
+    <textarea class="emscripten" id="output" rows="8"></textarea>
+
+    <script src='memoryprofiler.js'></script>
+
+    <script type="text/javascript">
+
+// Have we detected an HMD and PositionSensor, 
+// and is the latter reporting orientation data? 
+var isWebVRCapable = false; 
+
+// Has the user enabled WebVR HMD fullscreen? 
+var isWebVREnabled = false; 
+
+var gHMD, gPositionSensor;
+
+navigator.getVRDevices().then(function(devices) {
+  for (var i = 0; i < devices.length; ++i) {
+    if (devices[i] instanceof HMDVRDevice) {  
+      gHMD = devices[i];
+      console.log("gHMD found!");
+      console.log(gHMD);
+      break;
+    }
+  }
+  if (gHMD) {
+    for (var i = 0; i < devices.length; ++i) {
+      if (devices[i] instanceof PositionSensorVRDevice &&
+          devices[i].hardwareUnitId == gHMD.hardwareUnitId) {
+        gPositionSensor = devices[i];
+        console.log("gPositionSensor found!");
+        console.log(gPositionSensor);
+        console.log(gPositionSensor.getState()); 
+        break;
+      }
+    }
+  }
+
+  var checklist = runWebVRChecklist();
+  document.getElementById("display_wrapper").appendChild(checklist); 
+
+  if (!isWebVRCapable) {
+    var vrButton = document.getElementById("vrButton");
+    vrButton.parentNode.removeChild(vrButton);
+  } else {
+    //var fullscreenButton = document.getElementById("fullscreen_request"); 
+    //fullscreenButton.style.visibility = "hidden"; 
+  }
+});
+
+
+function runWebVRChecklist() {
+  var checklist = document.createElement("div"); 
+  checklist.id = "web_vr_checklist"; 
+  checklist.style.color = "grey"; 
+  checklist.style.textAlign = "center"; 
+  checklist.innerHTML = "</br>";
+
+  var checkBrowser = document.createElement("div"); 
+  checkBrowser.id = "web_vr_checklist_browser"; 
+  checkBrowser.innerHTML = "...64-bit browser?"
+
+  var checkHMD = document.createElement("div"); 
+  checkHMD.id = "web_vr_checklist_hmd"; 
+  checkHMD.innerHTML = "...HMD detected?"
+
+  var checkSensor = document.createElement("div"); 
+  checkSensor.id = "web_vr_checklist_sensor"; 
+  checkSensor.innerHTML = "...Sensor detected?"
+
+  var checkData = document.createElement("div"); 
+  checkData.id = "web_vr_checklist_data"; 
+  checkData.innerHTML = "...Receiving tracking data?"
+
+  checklist.appendChild(checkBrowser);  
+  checklist.appendChild(checkHMD);  
+  checklist.appendChild(checkSensor); 
+  checklist.appendChild(checkData);  
+
+  if (isBrowser64Bit) {
+    checkBrowser.style.color = "green"; 
+    checkBrowser.innerHTML = "64-bit browser!  :)";
+  } else {
+    checkBrowser.style.color = "red"; 
+    checkBrowser.innerHTML = "No 64-bit browser  :( </br>";
+    checkBrowser.innerHTML += "   <a href='mozvr.com/downloads/'>Get Firefox Nightly for WebVR!</a>";
+    return checklist; 
+  }
+
+  if (gHMD) {
+    checkHMD.style.color = "green"; 
+    checkHMD.innerHTML = "HMD detected!  :)";
+  } else {
+    checkHMD.style.color = "red"; 
+    checkHMD.innerHTML = "No HMD detected  :( </br>";
+    checkHMD.innerHTML += "   Check the Oculus Config Utility to make sure your Rift is connected and running."; 
+    return checklist; 
+  }
+
+  if (gPositionSensor) {
+    checkSensor.style.color = "green"; 
+    checkSensor.innerHTML = "Sensor detected!  :)";
+  } else {
+    checkSensor.style.color = "red"; 
+    checkSensor.innerHTML = "No sensor detected  :( </br>";
+    checkSensor.innerHTML += "   Reset your HMD and use the Oculus Config Utility to check your HMD and tracking camera."; 
+    return checklist; 
+  }
+
+  if (gPositionSensor && gPositionSensor.getState().timeStamp > 0) {
+  
+    isWebVRCapable = true; 
+    
+    checkData.style.color = "green"; 
+    checkData.innerHTML = "Tracking data received!  :)";
+  } else {
+    checkData.innerHTML = "red"; 
+    checkData.innerHTML = "No tracking data received  :( </br>";
+        checkSensor.innerHTML += "   Reset your HMD and use the Oculus Config Utility to check your HMD and tracking camera."; 
+
+  } 
+
+  return checklist; 
+}
+
+
+// http://stackoverflow.com/questions/4750015/regular-expression-to-find-urls-within-a-string
+function getHTMLGetParam(name){
+  if(name=(new RegExp('[?&]'+encodeURIComponent(name)+'=([^&]*)')).exec(location.search))
+    return decodeURIComponent(name[1]);
+}
+
+var filehostargument = "   "; 
+
+// we are serving via a server and it is unreal file server.
+if ( location.host != "" && getHTMLGetParam("cookonthefly") == "true" )
+{
+    filehostargument = "' -filehostIp=http://" + location.host + " '"; 
+}
+
+var UE4 = {
+  get resize_game() {
+    var fn = Module.cwrap('resize_game', null, ['number'],['number'] );
+    delete UE4["resize_game"];
+    UE4.resize_game = fn;
+    return fn;
+  }
+  ,
+  get on_fatal() {
+    try {
+        var fn = Module.cwrap('on_fatal', null, ['string', 'string'])
+        delete UE4["on_fatal"];
+        UE4.on_fatal = fn;
+        return fn;
+    } catch(e) {
+        return function() {}
+    }
+  },
+  get webvr_hmd_stereo_enable() {
+    try {
+      var fn = Module.cwrap('webvr_hmd_stereo_enable', 'number', ['number']); 
+      delete UE4["webvr_hmd_stereo_enable"]; 
+      UE4.webvr_hmd_stereo_enable = fn; 
+      return fn; 
+    } catch(e) {
+      return function() {}
+    }
+  },
+  get webvr_hmd_reset_sensors() {
+    try {
+      var fn = Module.cwrap('webvr_hmd_reset_sensors', 'number', ['number']); 
+      delete UE4["webvr_hmd_reset_sensors"]; 
+      UE4.webvr_hmd_reset_sensors = fn; 
+      return fn; 
+    } catch(e) {
+      return function() {}
+    }
+  },
+  get webvr_hmd_exit() {
+    try {
+      var fn = Module.cwrap('webvr_hmd_exit', 'number'); 
+      delete UE4["webvr_hmd_exit"]; 
+      UE4.webvr_hmd_exit = fn; 
+      return fn; 
+    } catch(e) {
+      return function() {}
+    }
+  },
+};
+
+function vrMode() {
+  UE4.webvr_hmd_stereo_enable(1);
+  if (canvas.mozRequestFullScreen) {
+    canvas.mozRequestFullScreen({ vrDisplay: gHMD });
+  } else if (canvas.webkitRequestFullscreen) { 
+    canvas.webkitRequestFullscreen({ vrDisplay: gHMD }); 
+  }
+  isWebVREnabled = true;
+}
+
+function onFullscreenChanged() {
+  if (!document.mozFullScreenElement && !document.webkitFullScreenElement){
+    UE4.webvr_hmd_stereo_enable(0);
+    isWebVREnabled = false; 
+  } 
+}
+
+function onKeyUp(e) {
+  if (e.keyCode == 13) {
+    e.preventDefault(); 
+
+    Module['pauseMainLoop'](); 
+
+    var canvas = document.getElementById("canvas"); 
+    var manager = loadThreeJS(canvas); 
+
+    //manager.mode = 3; 
+    manager.enterVR(); 
+
+    //if (isWebVREnabled) {
+    //  UE4.webvr_hmd_reset_sensors(1); 
+    //}
+  }
+}
+
+function loadThreeJS(canvas) {
+  //Setup three.js WebGL renderer
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+
+  // Append the canvas element created by the renderer to document body element.
+  //document.body.appendChild(renderer.domElement);
+
+  // Create a three.js scene.
+  var scene = new THREE.Scene();
+
+  // Create a three.js camera.
+  var camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.3, 10000);
+
+  // Apply VR headset positional data to camera.
+  var controls = new THREE.VRControls(camera);
+
+  // Apply VR stereo rendering to renderer.
+  var effect = new THREE.VREffect(renderer);
+  effect.setSize(canvas.width, canvas.height);
+
+  // Create a VR manager helper to enter and exit VR mode.
+  var manager = new WebVRManager(renderer, effect, {hideButton: true});
+
+  // Create 3D objects.
+  var geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+  var material = new THREE.MeshNormalMaterial();
+  var cube = new THREE.Mesh(geometry, material);
+
+  // Position cube mesh
+  cube.position.z = -1;
+
+  // Add cube mesh to your three.js scene
+  scene.add(cube);
+
+  // Also add a repeating grid as a skybox.
+  var boxWidth = 10;
+  var texture = THREE.ImageUtils.loadTexture(
+    'img/box.png'
+  );
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(boxWidth, boxWidth);
+
+  var geometry = new THREE.BoxGeometry(boxWidth, boxWidth, boxWidth);
+  var material = new THREE.MeshBasicMaterial({
+    map: texture,
+    color: 0x333333,
+    side: THREE.BackSide
+  });
+
+  var skybox = new THREE.Mesh(geometry, material);
+  scene.add(skybox);
+
+  // Request animation frame loop function
+  function animate(timestamp) {
+    // Apply rotation to cube mesh
+    cube.rotation.y += 0.01;
+
+    // Update VR headset position and apply to camera.
+    controls.update();
+
+    // Render the scene through the manager.
+    manager.render(scene, camera, timestamp);
+
+    requestAnimationFrame(animate);
+  }
+
+  // Kick off animation loop
+  animate();
+
+  return manager; 
+}
+
+function resizeListener(width, height) {
+  console.log("resizeListener:", width, height);
+  UE4.resize_game(width,height);
+}
+
+function preRunHandler() {
+  // document.addEventListener('fullscreenchange', fullScreenChange, false);
+  // document.addEventListener('webkitfullscreenchange', fullScreenChange, false);
+  // document.addEventListener('MSFullscreenChange', fullScreenChange, false);
+  document.addEventListener("mozfullscreenchange", onFullscreenChanged, false);
+  document.addEventListener("keyup", onKeyUp, false); 
+  memoryprofiler_add_hooks(); 
+}
+
+function loadJavaScriptFile(filename,isAsync){ 
+   // dynamically add script objects. 
+   var fileref=document.createElement('script');
+   fileref.setAttribute('type', 'text/javascript');
+   fileref.setAttribute('src', filename);
+   if(isAsync)
+     fileref.setAttribute('async','async');
+   document.body.appendChild(fileref);  
+}
+
+//http://www.browserleaks.com/webgl#howto-detect-webgl
+function webgl_detect()
+{
+    if (!!window.WebGLRenderingContext) {
+        var canvas = document.createElement("canvas"),
+             names = ["webgl", "experimental-webgl", "moz-webgl", "webkit-3d"],
+           context = false;
+ 
+        for(var i=0;i<4;i++) {
+            try {
+                context = canvas.getContext(names[i]);
+                if (context && typeof context.getParameter == "function") {
+                    // WebGL is enabled
+                    return true;
+                }
+            } catch(e) {}
+        }
+        // WebGL is supported, but disabled
+        return false;
+    }
+    // WebGL not supported
+    return false;
+}
+
+
+function isBrowser64Bit()  { 
+
+   var userAgent =  window.navigator.userAgent; 
+   
+   // if we are windows and runningas as WOW64 ( windows on windows 64 ) or Win32 we are a 32 bit browser. 
+   if ( userAgent.indexOf ("Windows") > -1 && ( userAgent.indexOf("WOW64") > -1 || userAgent.indexOf("Win32") > -1 ))
+        return false; 
+
+    // all other platforms and browsers - assume 64 bit. 
+    return true; 
+
+}
+
+// generated from game.template
+// note: Packaging process looks at HTML5Engine.ini to pick up values. 
+var TOTAL_GAME_MEMORY = %HEAPSIZE%;
+
+// check max memory usage, we need to clamp it down for 32 bit browsers. 
+if (!isBrowser64Bit()) { 
+
+      var max_32bit_browser_memory =  512 * 1024 * 1024 ; // using a reasonable number, this number can change depending on the memory pressure from the underlying OS and whether or not it can give a contigous block of 512 MB memory to a 32 bit process.
+
+      if ( TOTAL_GAME_MEMORY > max_32bit_browser_memory ){ 
+         console.log (" Current Browser : " + window.navigator.userAgent );
+         console.log ( "We are running in 32 bit browser, clamping requested memory size of " + TOTAL_GAME_MEMORY + " bytes to " + max_32bit_browser_memory 
+                        + " bytes or use a 64 bit browser "
+                     );
+        TOTAL_GAME_MEMORY = max_32bit_browser_memory; 
+      }
+}
+
+// setup global error handling. 
+// make exceptions more visible. 
+window.onerror  = function(msg, url, line, column, error) {
+  UE4.on_fatal(msg, error);
+  if ( msg.indexOf("memory") > -1 ) { 
+
+   var message = !isBrowser64Bit() ? " We are running on a 32 bit browser, please use a 64 bit browser to avoid memory constraints "
+          : " Looks like the game needs more than the allocated " + TOTAL_GAME_MEMORY + " bytes, please edit HTML5Engine.ini and repackage "; 
+
+   alert ( "We ran out of memory : " + message );
+  }
+  else
+  {
+   alert ( "Error: " + msg );
+  }
+};
+
+var Module;
+
+if (webgl_detect())
+{
+   Module = {
+  preRun: [preRunHandler],
+  postRun: [],
+  TOTAL_MEMORY: TOTAL_GAME_MEMORY,
+  noImageDecoding: true,
+  noAudioDecoding: true,
+      arguments: [%UE4CMDLINE% , filehostargument],
+  print: (function() {
+    var element = document.getElementById('output');
+    element.value = ''; // clear browser cache
+    return function(text) {
+      // show it if it's hidden first
+      element.style.display = "block";
+      element.value += text + "\n";
+      element.scrollTop = 99999; // focus on bottom
+    };
+  })(),
+  printErr: function(text) {
+    console.log(text);
+  },
+  canvas: document.getElementById('canvas'),
+  setStatus: function(text) {
+    if (Module.setStatus.interval) clearInterval(Module.setStatus.interval);
+    var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
+    var statusElement = document.getElementById('status');
+    var progressElement = document.getElementById('progress');
+    if (m) {
+      text = m[1];
+      progressElement.value = parseInt(m[2])*100;
+      progressElement.max = parseInt(m[4])*100;
+      progressElement.hidden = false;
+    } else {
+      progressElement.value = null;
+      progressElement.max = null;
+      progressElement.hidden = true;
+    }
+    statusElement.innerHTML = text;
+  },
+  totalDependencies: 0,
+  monitorRunDependencies: function(left) {
+    this.totalDependencies = Math.max(this.totalDependencies, left);
+    Module.setStatus(left ? 'Preparing... (' + (this.totalDependencies-left) + '/' + this.totalDependencies + ')' : 'All downloads complete.');
+  }
+};
+Module.setStatus('Downloading...');
+
+  // add these scripts to the dom. 
+  loadJavaScriptFile("json2.js",false);
+  loadJavaScriptFile("moz_binarystring.js",false);
+  loadJavaScriptFile("jStorage.js",false);
+  loadJavaScriptFile("%GAME%.data.js",false);
+  loadJavaScriptFile("%CONFIG%.js",true);
+
+}
+else
+{
+  document.getElementById('display_wrapper').innerHTML ='<a href="http://get.webgl.com/">This Browser doesn\'t seem to support WebGL</a>'; 
+  document.getElementById('status').innerHTML = ""; 
+}
+    </script>
+  </body>
+
+  <!--
+    three.js 3d library
+    -->
+  <script src="js/deps/three.js"></script>
+
+  <!--
+    VRControls.js acquires positional information from connected VR devices and applies the transformations to a three.js camera object.
+     -->
+  <script src="js/deps/VRControls.js"></script>
+
+  <!--
+    VREffect.js handles stereo camera setup and rendering.
+    -->
+  <script src="js/deps/VREffect.js"></script>
+
+  <!--
+    A polyfill for WebVR using the Device{Motion,Orientation}Event API.
+    -->
+  <script src="js/deps/webvr-polyfill.js"></script>
+
+  <!--
+    Helps enter and exit VR mode, provides best practices while in VR.
+    -->
+  <script src="build/webvr-manager.js"></script>
+
+<script>
+
+
+// Reset the position sensor when 'z' pressed.
+/*function onKey(event) {
+  if (event.keyCode == 90) { // z
+    controls.resetSensor();
+  }
+};
+
+window.addEventListener('keydown', onKey, true);
+
+// Handle window resizes
+function onWindowResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+
+  effect.setSize(window.innerWidth, window.innerHeight);
+}
+
+window.addEventListener('resize', onWindowResize, false);*/
+
+</script>
+  
+</html>
